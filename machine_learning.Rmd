@@ -1,0 +1,216 @@
+Using Data from Accelerometers to Predict the Correct Way of Doing Exercises
+========================================================
+
+## Synopsis
+
+Using personal sport devices it is now possible to collect a large amount of 
+data about personal activity relatively inexpensively. One thing that people 
+regularly do is quantify how much of a particular activity they do, but they 
+rarely quantify how well they do it. In this project, we will study how to 
+predict if a barbell lifted correctly or incorrectly using data from 
+accelerometers on the belt, forearm, arm, and dumbell of 6 participants, that
+were asked to perform in 5 different ways. 
+The dataset was kindly provided by [Groupware@LES](http://groupware.les.inf.puc-rio.br/har).
+
+## Data Processing
+
+### Download and read the data
+
+``` {r libs, echo=FALSE, results='hide'}
+library(ggplot2)
+library(lattice)
+library(caret)
+suppressPackageStartupMessages(library(randomForest))
+library(e1071)
+library(MASS)
+```
+
+```{r downloads, cache=TRUE}
+if (!file.exists("training.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", 
+                  "training.csv", mode="wb")
+}
+if (!file.exists("testing.csv")) {
+    download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                  "testing.csv", mode="wb")
+}
+training <- read.csv("training.csv")
+to_submit <- read.csv("testing.csv")
+head(training[1:5])
+```
+
+### Modify data
+
+Some variables in this dataset are very sparse and contain mainly NA's. These
+were excluded from feather analysis by removing them from training dataset 
+if they contains only NA's in "to_submit" dataset.
+
+```{r NA_rm}
+mask <- sapply(to_submit, function (x) {all(is.na(x))})
+training <- training[, !mask]
+```
+
+We also removed all variables, that are unnecessary to analysis, and might
+bring a bias to prediction model, like names of sportsmens, and time of 
+measurements.
+
+```{r non_signal_rm}
+training <- training[8:dim(training)[2]]
+```
+
+After that we splitted the dataset on three parts: training, testing, and stacked 
+model validation sets.
+
+```{r partition}
+inTrain <- createDataPartition(y=training$classe, p=0.7, list=FALSE)
+testing <- training[-inTrain, ]
+training <- training[inTrain, ]
+
+inTrain <- createDataPartition(y=training$classe, p=0.8, list=FALSE)
+validation <- training[-inTrain, ]
+training <- training[inTrain, ]
+```
+
+In the next step we analysed training dataset for co-varince of predictors.
+As we can see, there are many high-correlated predictors in the dataset:
+
+```{r covar}
+M <- abs(cor(training[,-53]))
+diag(M) <- 0
+which(M > 0.8, arr.ind=TRUE)
+```
+
+So we reduced the number of predictors by using the variable importance analysis 
+on object obtained by training. We used only variables with overall importance 
+higher than 5 in futher analysis (31 predictors).
+
+```{r covar_rm, cache=TRUE}
+rf_train_sample_indexes <- sample(dim(training)[1], size=1000, replace=FALSE)
+rf_train_sample <- training[rf_train_sample_indexes, ]
+
+rf_model <- train(classe ~ ., method="rf", data=rf_train_sample)
+importance <- varImp(rf_model)
+importance
+sum(importance$importance$Overall > 5)
+
+classe <- training$classe
+training <- training[, importance$importance$Overall > 5]
+training$classe <- classe
+```
+
+## Results
+
+### Predictor plotting
+
+As we can see, the most important features for predictions are roll_belt, 
+pitch_forearm, magnet_dumbbell_z and yaw_belt. Let exemine them in more details.
+At first, we can look at them together at feature plot, where every different 
+color coresponds to each "classe" to predict:
+
+```{r featurePlot, fig.height=10, fig.width=10}
+plot(training[, c("roll_belt", "pitch_forearm", "magnet_dumbbell_z", "yaw_belt", "classe")], 
+     col=training$classe, main="Feature plot of top 4 predictors for activity quality (classe)")
+```
+
+We can already see at feature plot some diferences in variable's distribution 
+for 5 different activities. Also we can plot the most important features 
+individually:
+
+```{r barplot}
+library(RColorBrewer)
+col <- brewer.pal(5, name="Set2")
+boxplot(roll_belt ~ classe, data=training, col=col, xlab="Activity (classe)", 
+        ylab="roll_belt")
+```
+
+At this boxplot we can see different distribution of roll_belt variable for "A" 
+and "E" activities, comparing to "B", "C", and "D". Also we can see major 
+differences in density distribution for the next two variables:
+
+```{r density_plots}
+qplot(pitch_forearm, col=classe, data=training, geom="density", 
+      main="Density distribution of pitch_forearm variable for different activity (classe)")
+qplot(magnet_dumbbell_z, col=classe, data=training, geom="density", 
+      main="Density distribution of magnet_dumbbell_z variable for different activity")
+```
+
+As we can see, there are a lot of different nonoverlapping spikes of density on 
+graph for different activities, which makes them good predictors.  
+
+### Machine learning
+
+We used three different models to predict activity quality from activity monitors 
+in testing set: random forest, linear discriminant analysis and support vector machine. 
+In order to increase overall sensitivity was used model stacking and new
+predictors from these models were used to train stacked model, which was tested 
+on validation dataset.
+
+Cross validation was used for model train control (method="cv").
+
+``` {r mod_fit, cache=TRUE}
+lda_model <- train(classe ~ ., method="lda", data=training, 
+                   trControl=trainControl(method="cv"))
+pred_lda <- predict(lda_model, testing)
+lda_result <- confusionMatrix(pred_lda, testing$classe)
+
+
+svm_fit <- svm(classe ~ ., data=training)
+pred_svm <- predict(svm_fit, testing)
+svm_result <- confusionMatrix(pred_svm, testing$classe)
+
+
+rf_train_sample_indexes <- sample(dim(training)[1], size=3000, replace=FALSE)
+rf_train_sample <- training[rf_train_sample_indexes, ]
+rf_model <- train(classe ~ ., method="rf", data=rf_train_sample, 
+                  trControl=trainControl(method="cv"))
+pred_rf <- predict(rf_model, testing)
+rf_result <- confusionMatrix(pred_rf, testing$classe)
+```
+
+The highest accuracy in prediction of activity quality on separate model 
+was obtained using random forest method:  
+
+```{r rf_res}
+rf_result
+```
+
+Little smaller accuracy was for support vector machine method:
+
+```{r svm_res}
+svm_result
+```
+
+And the lowest accuracy was for linear determinant analysis:
+
+```{r lda_res}
+lda_result
+```
+
+We created stacked model trained with results of previous models as predictors.
+We used random forest method with cross validation for this purpose. 
+
+```{r stack_model_test, cache=TRUE}
+predDF <- data.frame(rf=pred_rf, svm=pred_svm, lda=pred_lda, classe=testing$classe)
+stackMod <- train(classe ~ ., method="rf", trControl=trainControl(method="cv"), data=predDF)
+```
+
+Then, after training stacked model on testing dataset, we tested it on validation
+dataset:
+
+```{r stack_model_validation, cache=TRUE}
+predV_lda <- predict(lda_model, validation)
+predV_svm <- predict(svm_fit, validation)
+predV_rf <- predict(rf_model, validation)
+predVDF <- data.frame(rf=predV_rf, svm=predV_svm, lda=predV_lda, classe=validation$classe)
+stackPred <- predict(stackMod, predVDF)
+confusionMatrix(stackPred, validation$classe)
+```
+
+As result, we obtained higher overall accuracy of prediction, than using three 
+previous training models on their own, with 95% CI from 0.965 to 0.977, and best 
+accuracy estimate of 0.972.
+
+
+## References
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
