@@ -23,6 +23,7 @@ library(caret)
 suppressPackageStartupMessages(library(randomForest))
 library(e1071)
 library(MASS)
+library(RColorBrewer)
 ```
 
 ```{r downloads, cache=TRUE}
@@ -108,8 +109,13 @@ At first, we can look at them together at feature plot, where every different
 color coresponds to each "classe" to predict:
 
 ```{r featurePlot, fig.height=10, fig.width=10}
+col <- brewer.pal(5, name="Set2")
+cols <- as.numeric(training$classe)
+for (i in 1:length(col)) {
+    cols[cols == i] <- col[i]    
+}
 plot(training[, c("roll_belt", "pitch_forearm", "magnet_dumbbell_z", "yaw_belt", "classe")], 
-     col=training$classe, main="Feature plot of top 4 predictors for activity quality (classe)")
+     col=cols, pch=19, cex=0.7, main="Feature plot of top 4 predictors for activity quality (classe)")
 ```
 
 We can already see at feature plot some diferences in variable's distribution 
@@ -117,15 +123,11 @@ for 5 different activities. Also we can plot the most important features
 individually:
 
 ```{r barplot}
-library(RColorBrewer)
-col <- brewer.pal(5, name="Set2")
 boxplot(roll_belt ~ classe, data=training, col=col, xlab="Activity (classe)", 
         ylab="roll_belt")
 ```
 
-At this boxplot we can see different distribution of roll_belt variable for "A" 
-and "E" activities, comparing to "B", "C", and "D". Also we can see major 
-differences in density distribution for the next two variables:
+At this boxplot we can see different means and distributions for roll_belt variable depending on classe. Also we can see major differences in density distribution for the next two variables:
 
 ```{r density_plots}
 qplot(pitch_forearm, col=classe, data=training, geom="density", 
@@ -139,13 +141,13 @@ graph for different activities, which makes them good predictors.
 
 ### Machine learning
 
-We used three different models to predict activity quality from activity monitors 
-in testing set: random forest, linear discriminant analysis and support vector machine. 
-In order to increase overall sensitivity was used model stacking and new
-predictors from these models were used to train stacked model, which was tested 
-on validation dataset.
+We desided to use stacked model for our analysis with three different models: 
+random forest, linear discriminant analysis and support vector machine. 
+Model stacking was used for educational purposes and in order to increase overall 
+sensitivity of model. New predictors from these three models were used to train 
+stacked model, which was tested on validation dataset.
 
-Cross validation was used for model train control (method="cv").
+Cross validation was applied for model train control.
 
 ``` {r mod_fit, cache=TRUE}
 lda_model <- train(classe ~ ., method="lda", data=training, 
@@ -168,7 +170,9 @@ rf_result <- confusionMatrix(pred_rf, testing$classe)
 ```
 
 The highest accuracy in prediction of activity quality on separate model 
-was obtained using random forest method:  
+was obtained using random forest method. The accurasy is quite high, so there is 
+no reasons to use stacked model, but we did it just for educational purposes and in
+order to check how it can increase accuracy of predictions.
 
 ```{r rf_res}
 rf_result
@@ -180,7 +184,7 @@ Little smaller accuracy was for support vector machine method:
 svm_result
 ```
 
-And the lowest accuracy was for linear determinant analysis:
+And significantly lower accuracy was for linear determinant analysis:
 
 ```{r lda_res}
 lda_result
@@ -206,9 +210,10 @@ stackPred <- predict(stackMod, predVDF)
 confusionMatrix(stackPred, validation$classe)
 ```
 
-As result, we obtained higher overall accuracy of prediction, than using three 
-previous training models on their own, with 95% CI from 0.965 to 0.977, and best 
-accuracy estimate of 0.972.
+As result, we obtained little bit higher overall accuracy of prediction than using three 
+previous training models on their own, with 95% CI from 0.965 to 0.977, and the best 
+accuracy estimate of 0.972. But random forest model alone has quite similar results, so
+it was not necessary to use stacked model in this situation.
 
 
 ## References
